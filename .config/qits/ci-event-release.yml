@@ -1,0 +1,96 @@
+# The release pipeline: this repository reacts to its OWN release TAG and publishes the version-tagged
+# editor image.
+#
+# THE SELECTION NAMES THIS REPOSITORY, WHICH READS LIKE A LOOP AND IS NOT — the same shape every
+# sibling's release pipeline has. `SCMPublishTag` says only "this repository now has this tag", and
+# the git host says it the instant a push lands; nothing here pushes one. qits-ci turns a green run
+# into one `SoftwareRelease` per entry under `artifacts:` when an `SCMRelease` for the version
+# arrived too, and nothing here listens for either.
+#
+# THE TAG IS THE TRIGGER SO THAT A RESTORE NEEDS NOTHING ELSE. The tag is the durable release stamp —
+# it outlives the event log and every image store — so a bootstrap replay re-establishes this release
+# by pushing the tag alone and letting this pipeline rebuild the image. A real release pushes the tag
+# and publishes `SCMRelease` beside it; the extra event buys the announcement, not the image
+# (bootstrap-replay-plan.md in the wrapper).
+#
+# THE FILE HAS TO BE IN PLACE BEFORE THE TAG IT SELECTS IS PUSHED. The bus is at-most-once with no
+# catch-up and no replay, so a trigger file arriving after its event loses that release and looks
+# like a train that quietly did not roll.
+#
+# The repository has no version file. A qits release creates the version and the annotated tag, and
+# the tag name IS that version.
+event: SCMPublishTag
+when:
+  # repoName, not repoId: since the identity cutover the git host's own coordinate is an opaque
+  # UUID, so a name match on repoId never fires. The tag event echoes the public name the push
+  # was addressed with; a rename updates this line in the same campaign.
+  - repoName: { exact: qits-workspace-editor-oci }
+
+# A DECLARATION, NOT A REPORT. qits-ci never learns how to publish anything — the `docker push` below
+# is this repository's own step — so it cannot see what landed. It announces one `SoftwareRelease` per
+# entry on the strength of this line once the whole pipeline is green. Keep it true.
+#
+# THE NAME IS UNQUALIFIED ON PURPOSE. No registry-qualified reference is portable here — the registry
+# is `qits-platform-artifacts:8080` inside a step container and `localhost:8081` to qits-ci and
+# qits-deployments — and an OCI reference cannot carry a path prefix. So the declaration carries
+# `qits/workspace-editor` and the reader supplies its own host, exactly as the step below composes one
+# from environment.
+#
+# It is also the coordinate a downstream follow-bump selects on: `packageName` on the SoftwareRelease
+# is this string verbatim. qits-workspaces pins the editor image by version the same way this
+# repository pins the workspace image, and that pin's train reads this line.
+artifacts:
+  - { type: docker, name: qits/workspace-editor }
+
+# NO deployments.yml in this repository, and that is correct. Nothing DEPLOYS this image — qits-
+# workspaces starts a container from it per workspace, the same way it starts one from
+# `qits/workspace`. That is the same case as qits-workspace-oci, which has none; qits-database-oci
+# has one because a database genuinely runs as a deployed service.
+steps:
+  - image: qits/build-images/ci-base:latest
+    docker: true
+    timeout-seconds: 7200
+    script: |
+      # The daemon runs this with `bash -c` and no -e. Without -e a failed docker build is swallowed
+      # and a green release run makes qits-ci announce an artifact that was never pushed. -u makes an
+      # unset registry variable stop the step.
+      set -eu
+
+      # The payload reaches the container verbatim as one string in $QITS_EVENT_PAYLOAD — there is
+      # no per-field projection. ci-base carries jq; `jq -er` fails the step on an absent field
+      # rather than composing a reference out of the word "null". The case guard refuses a malformed
+      # value before any registry tag is created, since a CalVer is only digits and dots. It matters
+      # more than it looks: the tag name IS the version now, and no release flow vetted it — any tag
+      # pushed to this repository arrives here.
+      version=$(printf '%s' "$QITS_EVENT_PAYLOAD" | jq -er .tagName)
+      case "$version" in
+        ''|null|*[!0-9.]*) echo "not a CalVer tag: $version" >&2; exit 1 ;;
+      esac
+      echo "releasing qits/workspace-editor:$version"
+
+      # THE TAG IS THE CHECKOUT TARGET. An event-triggered run is cloned at the head of main, which
+      # a later push moves; the tag does not. The clone is shallow and carries no tags, hence the
+      # explicit refspec, and the URL rather than `origin` because every address arrives as
+      # environment. `checkout --detach` peels the annotated tag to its commit.
+      #
+      # It is also what makes the base pin reproducible. `ARG WORKSPACE_IMAGE` travels with the tree,
+      # so rebuilding a released tag rebuilds the editor on the workspace image that tag was released
+      # with — which is the whole reason the pin is a committed line rather than a floating tag.
+      git fetch "$QITS_CI_REPOSITORY_URL" "refs/tags/$version:refs/tags/$version"
+      git checkout --detach "$version"
+
+      # ONE TAG PER PIPELINE. Push only `:$version` here — never also `:latest` or the sha. A
+      # sibling repository tried `docker build -t A -t B` then pushed both, and the second push
+      # failed with "tag does not exist": BuildKit's exporter does not reliably leave every alias of
+      # a multi-tag build in the local image store. ci-post-receive.yml owns the sha coordinate;
+      # this pipeline owns the version coordinate.
+      #
+      # `docker: true` and the absence of `--network`/`--secret` are ci-post-receive.yml's, and for
+      # its reasons — that file carries them at length rather than a second copy drifting here.
+      ref="$QITS_REGISTRY/$QITS_IMAGE_REPOSITORY/workspace-editor:$version"
+      docker build -t "$ref" -f Dockerfile .
+      docker push "$ref"
+      # NO `docker rmi "$ref"`: on a CI host it frees nothing — the layers stay in the builder's
+      # cache either way — while under the containerd image store it drops the last reference to
+      # content a concurrent build of this same Dockerfile may still be resolving, which is the
+      # race that broke the release of 2026-08-11.

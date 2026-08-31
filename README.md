@@ -1,19 +1,139 @@
-# This repository
+# qits-workspace-editor-oci
 
-> Replace this file with a description of what this component is and does.
+The workspace **editor** image, published as **`qits/workspace-editor`**.
 
-This is a **component repository** of a qits project. It was created blank and attached to its
-project's wrapper repository as a submodule, at `components/<component>/<repository>` — the
-directory says which component it belongs to, and its own name says the role it plays
-(`-service`, `-daemon`, `-frontend`, `-cli`, `-oci`, `-javalib`/`-jslib`). Renaming it to carry a
-different role suffix is how you change what kind of component it is.
+It is the workspace image plus one directory: a pinned
+[openvscode-server](https://github.com/gitpod-io/openvscode-server) unpacked at
+`/opt/openvscode-server`, and a provenance file at `/etc/qits-editor-provenance` saying which version
+came from where. Nothing else. No user, no workdir, no exposed port, no entrypoint — the base's
+daemon still is the container's PID 1, and the editor is a process that daemon starts.
 
-The wrapper is the project: a repository that is not one of its `.gitmodules` entries is not part of
-the project, and reconciling the wrapper is what puts a stray one back.
+    FROM registry.dev.localhost:8080/qits/workspace:<pin>   <- the workspace container image
+      + /opt/openvscode-server/…                            <- this repository's whole contribution
+      + /etc/qits-editor-provenance
 
-## Files
+## Why it is a separate image
 
-- `.config/qits/repository.yml` — this repository's qits configuration: its services, actions and
-  bootstrap chain. It is read in-container per workspace from your branch's checkout, so editing it
-  is an ordinary commit.
-- `.gitignore` — build output and local state, per language. Add yours as the component grows.
+openvscode-server unpacks to a few hundred megabytes that only a workspace *with the editor turned
+on* ever reads. Layering it into `qits/workspace` would make every ordinary workspace pull and carry
+them for nothing, so the binary lives in a child image instead — and "does this container have an
+editor" becomes a question about which image it was started from, answered before the container
+exists, rather than a runtime flag.
+
+The published name is `qits/workspace-editor`, not the repository name, the same split
+`qits-workspace-oci` publishing `qits/workspace-base` and `qits-workspace-daemon` publishing
+`qits/workspace` already record. The repository name is where the recipe lives; the image name is
+what the recipe produces and what qits-workspaces writes.
+
+## What is deliberately not here
+
+- **No launch flags and no connection token.** How the editor is started — its port, its
+  `--user-data-dir`, its authentication — is the daemon's business and changes without rebuilding
+  this image. This repository only puts the binary at a path the daemon can hard-code.
+- **No extension gallery.** Open VSX is not reachable from the platform network, so the editor runs
+  on the extensions the distribution bundles. There is nothing to configure here for that; if the
+  gallery ever needs to be switched off explicitly it belongs to the launch, not to the recipe.
+- **No path prefix.** openvscode-server serves from `/` and this platform does no path rewriting
+  anywhere, so a workspace's editor is reached on its own origin. Nothing in this image needs to
+  know that, but everything downstream does.
+- **No `deployments.yml`.** Nothing *deploys* this image: qits-workspaces starts a container from it
+  per workspace, exactly as it does from `qits/workspace`. Same case as `qits-workspace-oci`.
+
+## The two pins
+
+Both live in `Dockerfile`, both as `ARG`s with the pin as the default, so CI passes no
+`--build-arg` and rebuilding a released tag rebuilds exactly what that tag shipped.
+
+| Pin | Line | Who moves it |
+|---|---|---|
+| `WORKSPACE_IMAGE` | `ARG WORKSPACE_IMAGE=registry.dev.localhost:8080/qits/workspace:<version>` | the bump train, automatically |
+| `OPENVSCODE_VERSION` + `OPENVSCODE_SHA256` | two `ARG`s | a human, in one commit, together |
+
+`OPENVSCODE_SHA256` is part of the pin and not decoration: the URL names an immutable GitHub release
+asset, and an asset that is deleted and re-uploaded under the same name would otherwise substitute
+itself into the image silently. Bumping the version without the sum fails the build, which is the
+intent.
+
+## The bump train
+
+`qits-workspace-daemon` releases `qits/workspace`; this repository follows it:
+
+1. **`SoftwareRelease {docker, qits/workspace}`** — qits-ci announcing the image is *in the
+   registry* (not `SCMRelease`, which fires at the tag, before a ~3.4 GB push finishes).
+2. `.config/qits/ci-event-upstream-workspace-daemon.yml` HEAD-probes the manifest, `sed`s the one
+   `ARG WORKSPACE_IMAGE=` line, **reads the line back** and fails if the sed matched nothing, then
+   force-pushes `maintenance/qits-workspace-daemon`.
+3. The `maintenance/` leg of `.config/qits/ci-post-receive.yml` sees that push and calls the release
+   door.
+4. `.config/qits/ci-event-release.yml` rebuilds at the tag and pushes
+   `qits/workspace-editor:<version>`.
+
+Three files, one hand-off each, nobody in the loop. It is the same train
+`qits-workspace-daemon` runs against `qits-workspace-oci`, one level down — a toolchain release
+reaches this image by two hops, each an ordinary release of the repository in between.
+
+**The train carries no `repository:` selector, and its absence is the fix, not an omission.**
+`repository` on a `SoftwareRelease` is qits-ci's own storage id for the run, an opaque UUID since the
+2026-08-22 identity cutover; a name written there matches nothing, silently, and that is what left
+the identical train in `qits-workspace-daemon` dead for a week. The `{packageType, packageName}` pair
+is already narrow — a repository publishing several images emits one event per artifact.
+
+## Lifecycle
+
+1. **Push** — `.config/qits/ci-post-receive.yml` builds and pushes `qits/workspace-editor:<sha>`.
+   There is no test step and none is missing: this repository holds a Dockerfile and no code, so the
+   build *is* the test.
+2. **Release** — qits-workspaces stamps a CalVer and pushes the annotated tag.
+   `.config/qits/ci-event-release.yml` builds *at the tag* and pushes
+   `qits/workspace-editor:<version>`; its green run makes qits-ci announce one `SoftwareRelease`.
+3. **Consumption** — qits-workspaces pins the editor image by version and starts a container from it
+   when a workspace asks for an editor. A released image goes live on the next deploy of the pinning
+   service; containers already running are untouched.
+
+One tag per pipeline, always: the push pipeline owns the sha coordinate, the release pipeline owns
+the version coordinate, and neither writes the other's. `docker build -t A -t B` followed by two
+pushes fails the second with "tag does not exist" — BuildKit's exporter does not reliably leave every
+alias of a multi-tag build in the local image store.
+
+## Building by hand
+
+    docker build -t qits/workspace-editor:local .
+
+Against a hand-built workspace rather than the pinned release:
+
+    docker build -t qits/workspace-editor:local . \
+      --build-arg WORKSPACE_IMAGE=qits/workspace:native
+
+Expect the base pull to dominate: the workspace image is ~3.4 GB, and this repository adds a ~77 MB
+download on top of it. CI allows two hours for both pipelines.
+
+## The provenance file
+
+    $ docker run --rm qits/workspace-editor:local cat /etc/qits-editor-provenance
+    openvscode-version=1.109.5
+    openvscode-url=https://github.com/gitpod-io/openvscode-server/releases/download/openvscode-server-v1.109.5/openvscode-server-v1.109.5-linux-x64.tar.gz
+    openvscode-sha256=b433bf4f0227321a7014d8460d10a8f958adc0f45aa79bd889e84e65e8f88363
+    openvscode-home=/opt/openvscode-server
+    workspace-image=registry.dev.localhost:8080/qits/workspace:2026.823.71954
+
+It records the base image too, so one read of a live workspace says both which editor and which
+workspace are running — without a registry lookup, and without trusting the tag the container was
+started under.
+
+## Smoke test, at the pin
+
+The image cannot be exercised by CI beyond "it builds": nothing here starts a server, and the daemon
+that would is in another repository. So when this pin moves — either pin — run the editor once by
+hand and check the four things that break independently:
+
+    docker run --rm -it -p 3000:3000 --entrypoint /opt/openvscode-server/bin/openvscode-server \
+      qits/workspace-editor:local --host 0.0.0.0 --port 3000 --without-connection-token
+
+- the workbench **renders at `/`**, not at a sub-path;
+- **static assets** load from the root origin (no 404s in the network panel);
+- the **websocket** to the extension host connects and stays up — a dead one shows as a workbench
+  that paints and then never opens a file;
+- a **webview** (the Markdown preview is the cheapest) renders, since webviews are served from their
+  own origin and fail separately from everything above.
+
+`--entrypoint` is required: the image's entrypoint is the workspace daemon, on purpose.
