@@ -38,13 +38,12 @@
 # of headroom for those bytes on a cold cache and qits-workspace-daemon matched it; there is no
 # reason for this repository to be the optimist.
 #
-# THE BUMP TRAIN'S LOOP IS CLOSED SOMEWHERE ELSE NOW, AND THIS FILE NO LONGER HELPS.
-# ci-event-upstream-workspace-daemon.yml still follows a `qits/workspace` release by rewriting the
-# base pin in Dockerfile and pushing `maintenance/qits-workspace-daemon`, and that push still lands
-# here for its build. What used to follow the build was a second step asking the qits-workspaces
-# release door; qits-maintenance now makes that ask itself, with its own credential, the moment the
-# bump is pushed. Two callers for one release was one too many, so the step is gone and the
-# build is all this pipeline owes the train.
+# THE BUMP TRAIN IS SOMEBODY ELSE'S ENTIRELY NOW, AND THIS FILE JUST BUILDS WHAT IT PUSHES.
+# There is no hop file in this repository any more: qits-maintenance reads the `ARG WORKSPACE_IMAGE=`
+# default in Dockerfile as an ordinary docker pin, notices a newer `qits/workspace`, rewrites the tag
+# on its own branch and asks the release door itself. That branch still lands here for its build,
+# which is the one thing this pipeline owes the train — the follow-up release step it used to carry
+# is gone, because two callers for one release was one too many.
 steps:
   - image: qits/build-images/ci-base:latest
     docker: true

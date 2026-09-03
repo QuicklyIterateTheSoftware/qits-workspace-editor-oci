@@ -46,7 +46,7 @@ Both live in `Dockerfile`, both as `ARG`s with the pin as the default, so CI pas
 
 | Pin | Line | Who moves it |
 |---|---|---|
-| `WORKSPACE_IMAGE` | `ARG WORKSPACE_IMAGE=registry.dev.localhost:8080/qits/workspace:<version>` | the bump train, automatically |
+| `WORKSPACE_IMAGE` | `ARG WORKSPACE_IMAGE=registry.dev.localhost:8080/qits/workspace:<version>` | qits-maintenance, automatically |
 | `OPENVSCODE_VERSION` + `OPENVSCODE_SHA256` | two `ARG`s | a human, in one commit, together |
 
 `OPENVSCODE_SHA256` is part of the pin and not decoration: the URL names an immutable GitHub release
@@ -54,29 +54,34 @@ asset, and an asset that is deleted and re-uploaded under the same name would ot
 itself into the image silently. Bumping the version without the sum fails the build, which is the
 intent.
 
-## The bump train
+## How the base pin moves
 
-`qits-workspace-daemon` releases `qits/workspace`; this repository follows it:
+`qits-workspace-daemon` releases `qits/workspace`; this repository follows it — and there is no
+pipeline here that does the following. **qits-maintenance does**, the same way it moves a maven
+property or an npm dependency:
 
-1. **`SoftwareRelease {docker, qits/workspace}`** — qits-ci announcing the image is *in the
-   registry* (not `SCMRelease`, which fires at the tag, before a ~3.4 GB push finishes).
-2. `.config/qits/ci-event-upstream-workspace-daemon.yml` HEAD-probes the manifest, `sed`s the one
-   `ARG WORKSPACE_IMAGE=` line, **reads the line back** and fails if the sed matched nothing, then
-   force-pushes `maintenance/qits-workspace-daemon`.
-3. The `maintenance/` leg of `.config/qits/ci-post-receive.yml` sees that push and calls the release
-   door.
+1. It inventories this repository's Dockerfile and records the literal `ARG WORKSPACE_IMAGE=` default
+   as a **docker pin** at `arg:WORKSPACE_IMAGE`. The registry host is dropped when the image is
+   matched, so the pin's name is `qits/workspace` — the image qits-workspace-daemon publishes.
+2. A newer `qits/workspace` in the registry makes the pin outdated. Maintenance rewrites the tag on
+   that one line, on a branch of its own, fast-forward and never forced.
+3. `.config/qits/ci-post-receive.yml` builds that push, and maintenance calls the release door
+   itself.
 4. `.config/qits/ci-event-release.yml` rebuilds at the tag and pushes
    `qits/workspace-editor:<version>`.
 
-Three files, one hand-off each, nobody in the loop. It is the same train
-`qits-workspace-daemon` runs against `qits-workspace-oci`, one level down — a toolchain release
-reaches this image by two hops, each an ordinary release of the repository in between.
+Nobody in the loop, and nothing repository-local to keep matched. This used to be a **hop file** —
+`.config/qits/ci-event-upstream-workspace-daemon.yml`, a pipeline watching a `SoftwareRelease`,
+`sed`ing the line and force-pushing `maintenance/qits-workspace-daemon`. Its whole job is now a row
+in the maintenance inventory, so it is gone: one fewer per-repository copy of a mechanism, and one
+fewer event selector to get quietly wrong. (The hop's most expensive lesson was exactly that — a
+`repository:` selector holding a *name* matched nothing after the 2026-08-22 identity cutover and
+left the identical train in `qits-workspace-daemon` dead for a week.)
 
-**The train carries no `repository:` selector, and its absence is the fix, not an omission.**
-`repository` on a `SoftwareRelease` is qits-ci's own storage id for the run, an opaque UUID since the
-2026-08-22 identity cutover; a name written there matches nothing, silently, and that is what left
-the identical train in `qits-workspace-daemon` dead for a week. The `{packageType, packageName}` pair
-is already narrow — a repository publishing several images emits one event per artifact.
+**The pin's literal shape is the contract now.** Maintenance reads a docker pin only from a literal
+`ARG <NAME>=<image>:<tag>`; a value carrying `$`, `@` or `://`, or with no `/` before the tag, is
+never a pin. Rewriting that line into an indirection would not fail anything — it would just stop the
+base from following the toolchain, silently.
 
 ## Lifecycle
 
