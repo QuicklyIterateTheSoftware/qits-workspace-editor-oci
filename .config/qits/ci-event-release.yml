@@ -168,8 +168,8 @@ steps:
         # THE DEFAULT IS WHAT THE BUILD RESOLVED, which is the only reason this is truthful rather
         # than plausible: the `docker build` above passes no `--build-arg`, so a release rebuilds on
         # exactly the workspace image its tree carries — that is the whole point of the pin being a
-        # committed line that ci-event-upstream-workspace-daemon.yml seds, and it is why this
-        # document can be written from the Dockerfile without asking the daemon what it just built.
+        # committed line that qits-maintenance bumps, and it is why this document can be written
+        # from the Dockerfile without asking the daemon what it just built.
         #
         # Braced form only. `FROM $WORKSPACE_IMAGE` is legal docker and is NOT resolved here; it
         # falls through to the guard below and stops the release with the ref printed, which is the
@@ -258,9 +258,9 @@ steps:
       # would publish a document saying the editor image adds nothing to the workspace — the one
       # thing about it anybody opens an SBOM to learn.
       #
-      # THE ARG NAMES ARE A CONTRACT WITH Dockerfile, exactly as the base-pin prefix in
-      # ci-event-upstream-workspace-daemon.yml is one. Rename or drop either and this step stops the
-      # release, rather than quietly publishing a document that no longer mentions the editor.
+      # THE ARG NAMES ARE A CONTRACT WITH Dockerfile, exactly as the base-pin line is one with
+      # qits-maintenance. Rename or drop either and this step stops the release, rather than quietly
+      # publishing a document that no longer mentions the editor.
       #
       # `pkg:generic` because there is no ecosystem to name: this is a GitHub release asset, not a
       # package in a registry anybody resolves. qits-maintenance stores a purl type it does not
