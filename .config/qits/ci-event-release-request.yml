@@ -1,12 +1,39 @@
-# The pipeline qits-ci runs on every push to a tracked branch of this repository.
+# THE ONE QA PIPELINE THIS REPOSITORY HAS, and it runs for a release request and nothing else.
 #
-# One step, on every branch: build the image and push it under the built sha.
+# There is no push pipeline any more, and `ci-post-receive.yml` is what this file replaces.
+# qits-projects keeps a backing branch `release/<id>` per open release request — an octopus merge of
+# that request's sources, refolded whenever the set changes — and publishes `ReleaseRequestChanged`
+# on every successful re-fold. The merge primitive that writes that branch fires no `post-receive`
+# and so publishes no `SCMPublishCommit`: without this file the fold exists and NOTHING BUILDS IT.
+# A fold the git host answered `unchanged`, and one that conflicted, publish nothing — so every
+# arrival here is a new sha worth a build.
+#
+# DECIDED AT MAIN, BUILT AT THE FOLD. This file is discovered, parsed and selected at `main`'s head,
+# always; only the run's branch and sha come from the payload, which is why `checkout:` names them
+# as a pair — a sha with no branch whose history holds it is not something a step container can
+# fetch. A release request therefore cannot alter the CI that gates it by folding in a commit that
+# edits this file. Inside a step, $QITS_CI_BRANCH is `release/<id>` and $QITS_CI_SHA is the merged
+# sha; the fold is already checked out, so nothing below fetches or switches refs.
+#
+# EVERY STEP HERE IS GATING, INCLUDING THE ONE THAT PUSHES AN IMAGE. It stays in the gating half on
+# purpose: whatever a run publishes is published before anything later can fail. The coordinate it
+# pushes is the MERGED SHA, which no `ReleaseRequestChanged` is ever derived from, so this pipeline
+# cannot re-trigger itself; and a redelivered event re-pushes identical content under the same tag,
+# which is why nothing here treats an existing tag as an error. The verdict returns on the ordinary
+# `BuildSuccessful`/`BuildFailed` with `commitSha` = the merged sha, which is what qits-projects'
+# `BuildStatusListener` matches on together with `repoId`.
+#
+# ci-event-release.yml BESIDE THIS FILE IS UNTOUCHED and is still the other half: it reacts to this
+# repository's release TAG and publishes the released coordinate. This file names a build by the
+# merged sha; that one names a release by its version. Neither pushes the other's coordinate.
+#
+# One step: build the image and push it under the merged sha.
 #
 # THERE IS NO TEST STEP AND NOTHING IS MISSING. This repository holds a Dockerfile and no code: no
 # pom, no package.json, nothing a `verify` could run. The build IS the test — a broken `FROM`, a
 # moved download URL, a re-uploaded release asset with a different checksum, all fail here on the
-# push that caused them rather than at release time when the answer arrives with nothing to do
-# about it.
+# fold that carries the change rather than at release time when the answer arrives with nothing to
+# do about it.
 #
 # THE IMAGE NAME IS NOT THE REPOSITORY NAME. This publishes `qits/workspace-editor`, the same split
 # `qits-workspace-oci` publishing `qits/workspace-base` and `qits-workspace-daemon` publishing
@@ -38,13 +65,27 @@
 # of headroom for those bytes on a cold cache and qits-workspace-daemon matched it; there is no
 # reason for this repository to be the optimist.
 #
-# THE BUMP TRAIN'S LOOP IS CLOSED SOMEWHERE ELSE NOW, AND THIS FILE NO LONGER HELPS.
+# THE BUMP TRAIN REACHES THIS FILE THROUGH A RELEASE REQUEST NOW, NOT THROUGH A PUSH.
 # ci-event-upstream-workspace-daemon.yml still follows a `qits/workspace` release by rewriting the
-# base pin in Dockerfile and pushing `maintenance/qits-workspace-daemon`, and that push still lands
-# here for its build. What used to follow the build was a second step asking the qits-workspaces
-# release door; qits-maintenance now makes that ask itself, with its own credential, the moment the
-# bump is pushed. Two callers for one release was one too many, so the step is gone and the
-# build is all this pipeline owes the train.
+# base pin in Dockerfile and pushing `maintenance/qits-workspace-daemon`. That push no longer builds
+# anything on its own — there is no push pipeline left to catch it — so the branch is a SOURCE, and
+# it is built here when qits-maintenance folds it into a release request. What used to follow the
+# build was a second step asking the qits-workspaces release door; qits-maintenance now makes that
+# ask itself, with its own credential. Two callers for one release was one too many, so the step is
+# gone and the build is all this pipeline owes the train.
+
+event: ReleaseRequestChanged
+
+when:
+  # repoName, not repoId: the git host's storage coordinate is an opaque UUID since
+  # the identity cutover, so a name match on repoId is not dependable. The event
+  # echoes the public name; a rename updates this line in the same campaign.
+  - repoName: { exact: qits-workspace-editor-oci }
+
+checkout:
+  branch: backingBranch
+  sha: mergedSha
+
 steps:
   - image: qits/build-images/ci-base:latest
     docker: true
