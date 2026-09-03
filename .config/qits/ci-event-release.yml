@@ -94,3 +94,236 @@ steps:
       # cache either way — while under the containerd image store it drops the last reference to
       # content a concurrent build of this same Dockerfile may still be resolving, which is the
       # race that broke the release of 2026-08-11.
+
+      # --- the SBOM -------------------------------------------------------------------------------
+      # THE SBOM FOR AN IMAGE LIKE THIS ONE IS ITS `FROM` LINE PLUS THE ONE THING IT ADDS, and there
+      # is nothing else it honestly could be: this Dockerfile declares no manifest a scanner could
+      # read. It inherits a workspace image and unpacks a single pinned tarball over it, so the
+      # document says exactly that — which upstream this editor was laid on, and which
+      # openvscode-server build is in /opt — and nothing it would have to invent.
+      #
+      # The shape is qits-workspace-oci's, which carries the reasoning for the `FROM` parsing at
+      # length rather than a second copy of it drifting here. Two things are this repository's own
+      # and are argued where they happen: the base is an `ARG` and has to be resolved, and the
+      # tarball is a real component.
+      #
+      # AFTER THE PUSH AND BEFORE THE STEP EXITS, which is the ordering rule rather than a
+      # preference: qits-ci announces `SoftwareRelease` only for a green run, so a document stored
+      # here can never be missing for a version somebody was told about. Nothing retries the other
+      # way round — qits-maintenance reads a 404 as MISSING and asks again only at the NEXT release —
+      # so a failed PUT fails the release on purpose, and the tag can be re-pushed to rebuild.
+
+      # TWO COLLECTIONS, BECAUSE `ARG` HAS TWO SCOPES AND THIS FILE USES BOTH. An `ARG` before the
+      # first `FROM` is GLOBAL and is the only kind a `FROM` line may read; an `ARG` after one
+      # belongs to that stage and is invisible to every `FROM`. So `global_args` quits at the first
+      # `FROM` — docker's own scope rule, not an optimisation — and is what the base resolution
+      # below is allowed to consult, while `stage_args` is every `ARG` in the file and is where the
+      # editor's own pin actually lives: `OPENVSCODE_VERSION` is declared beside the `RUN` that uses
+      # it, which is AFTER the `FROM` and therefore not global at all. One collection for both would
+      # be wrong whichever one it was — the global set drops the editor, the whole-file set lets a
+      # stage `ARG` resolve a base docker would never resolve it with.
+      #
+      # In both, the value has to be one whitespace-free word: a spaced-out or empty default is not
+      # collected at all, so anything reaching for it fails loudly below instead of resolving to a
+      # fragment of itself.
+      arg_sed='s/^[[:space:]]*[Aa][Rr][Gg][[:space:]]\{1,\}\([A-Za-z_][A-Za-z0-9_]*\)=\([^[:space:]]\{1,\}\)[[:space:]]*$/\1=\2/p'
+      global_args=$(sed -n "/^[[:space:]]*[Ff][Rr][Oo][Mm][[:space:]]/q
+        $arg_sed" Dockerfile)
+      stage_args=$(sed -n "$arg_sed" Dockerfile)
+
+      # One lookup for both, taking the collection it should read as its second argument. There is
+      # no `local` in POSIX sh — the daemon may run this under `sh` — so the helper only reads its
+      # arguments and prints; the `_`-prefixed name keeps it clear of the loop's variables.
+      arg_default() {
+        for _def in $2; do
+          case "$_def" in
+            "$1="*) printf '%s' "${_def#*=}"; return 0 ;;
+          esac
+        done
+        return 1
+      }
+
+      # A multi-stage file names its OWN earlier stages in later `FROM`s, and a stage alias is not
+      # an upstream image. This file has one stage today and the skip below therefore removes
+      # nothing; it is here so the document stays right the day it grows a builder stage.
+      stages=$(sed -n \
+        's/^[[:space:]]*[Ff][Rr][Oo][Mm][[:space:]].*[[:space:]][Aa][Ss][[:space:]]\{1,\}\([^[:space:]]\{1,\}\).*$/\1/p' \
+        Dockerfile)
+      # Every `FROM`'s image ref: drop the keyword, drop any `--platform=`-style flag, keep the
+      # first word — which leaves the ref alone and discards a trailing `AS <stage>`.
+      bases=$(sed -n 's/^[[:space:]]*[Ff][Rr][Oo][Mm][[:space:]]\{1,\}//p' Dockerfile \
+        | sed 's/--[^[:space:]]*[[:space:]]\{1,\}//g' \
+        | sed 's/[[:space:]].*$//')
+
+      components=''
+      depends=''
+      seen=''
+      sep=''
+      for base in $bases; do
+        # THE BASE HERE IS `${WORKSPACE_IMAGE}`, WHICH NEITHER SIBLING HAD TO HANDLE. Taken
+        # literally it would reach the charset guard below and stop the release, and a document
+        # naming a variable would be worse than none. So the expansion is resolved against the
+        # global `ARG` defaults collected above.
+        #
+        # THE DEFAULT IS WHAT THE BUILD RESOLVED, which is the only reason this is truthful rather
+        # than plausible: the `docker build` above passes no `--build-arg`, so a release rebuilds on
+        # exactly the workspace image its tree carries — that is the whole point of the pin being a
+        # committed line that ci-event-upstream-workspace-daemon.yml seds, and it is why this
+        # document can be written from the Dockerfile without asking the daemon what it just built.
+        #
+        # Braced form only. `FROM $WORKSPACE_IMAGE` is legal docker and is NOT resolved here; it
+        # falls through to the guard below and stops the release with the ref printed, which is the
+        # right failure — a silent half-resolution would publish an SBOM naming the wrong base. The
+        # counter is the same insurance against a self-referential default.
+        #
+        # Resolved BEFORE the stage-alias skip, so an alias reached through an `ARG` is still
+        # recognised as the alias it is and dropped rather than invented as an upstream.
+        tries=0
+        while :; do
+          case "$base" in
+            *'${'*) : ;;
+            *) break ;;
+          esac
+          tries=$((tries + 1))
+          if [ "$tries" -gt 16 ]; then
+            echo "Dockerfile: FROM '$base' does not resolve" >&2; exit 1
+          fi
+          key=${base#*'${'}
+          key=${key%%'}'*}
+          value=$(arg_default "$key" "$global_args") || {
+            echo "Dockerfile: FROM reads \${$key}, which has no global ARG default" >&2; exit 1
+          }
+          base="${base%%"\${$key}"*}$value${base#*"\${$key}"}"
+        done
+
+        for stage in $stages; do
+          if [ "$base" = "$stage" ]; then base=''; break; fi
+        done
+        [ -n "$base" ] || continue
+        # The ref reaches a JSON document and a purl, so its shape is checked the same way the
+        # version was: a reference is the registry's own charset and nothing else. It is also what
+        # catches an unresolved expansion, since `$`, `{` and `}` are not in that charset.
+        case "$base" in
+          ''|*[!a-zA-Z0-9._:/@-]*)
+            echo "Dockerfile: unusable FROM '$base'" >&2; exit 1 ;;
+        esac
+        # DISTINCT BASES ONLY — two stages built from one upstream are one dependency.
+        case " $seen " in
+          *" $base "*) continue ;;
+        esac
+        seen="$seen $base"
+
+        case "$base" in
+          # A digest ref pins harder than a tag, so the digest IS the version.
+          *@*)
+            name=${base%@*}
+            tag=${base##*@}
+            ;;
+          *)
+            # An untagged `FROM` means `latest` by definition. The colon is not proof of a tag: a
+            # registry host may carry a port, and in `host:5000/image` the colon is the port's —
+            # which is not hypothetical here, the base is `registry.dev.localhost:8080/qits/...`.
+            tag=${base##*:}
+            case "$base" in
+              *:*) : ;;
+              *) tag='' ;;
+            esac
+            case "$tag" in
+              */*) tag='' ;;
+            esac
+            if [ -n "$tag" ]; then
+              name=${base%:*}
+            else
+              name=$base
+              tag=latest
+            fi
+            ;;
+        esac
+
+        purl="pkg:docker/$name@$tag"
+        components="$components$sep$(printf \
+          '{"type":"container","bom-ref":"%s","name":"%s","version":"%s","purl":"%s"}' \
+          "$purl" "$name" "$tag" "$purl")"
+        depends="$depends$sep$(printf '"%s"' "$purl")"
+        sep=','
+      done
+      if [ -z "$components" ]; then
+        echo "Dockerfile declares no base image" >&2; exit 1
+      fi
+
+      # THE BASE IS NOT THE WHOLE STORY HERE, and this is where the document departs from the two
+      # siblings it is modelled on. Their images are a `FROM` plus `apt`/`apk`, and a package
+      # inventory is not something a release step can honestly hand-build; this image is a `FROM`
+      # plus exactly ONE artifact, fetched from a named URL under a committed checksum. Omitting it
+      # would publish a document saying the editor image adds nothing to the workspace — the one
+      # thing about it anybody opens an SBOM to learn.
+      #
+      # THE ARG NAMES ARE A CONTRACT WITH Dockerfile, exactly as the base-pin prefix in
+      # ci-event-upstream-workspace-daemon.yml is one. Rename or drop either and this step stops the
+      # release, rather than quietly publishing a document that no longer mentions the editor.
+      #
+      # `pkg:generic` because there is no ecosystem to name: this is a GitHub release asset, not a
+      # package in a registry anybody resolves. qits-maintenance stores a purl type it does not
+      # inventory with a null ecosystem — shown, never matched — which is exactly the treatment this
+      # component wants. The checksum travels as a CycloneDX hash instead of a purl qualifier: it is
+      # the stronger identifier, and the URL it would qualify is itself an unexpanded `ARG`.
+      editor_version=$(arg_default OPENVSCODE_VERSION "$stage_args") \
+        || { echo "Dockerfile: no ARG OPENVSCODE_VERSION with a default" >&2; exit 1; }
+      editor_sha=$(arg_default OPENVSCODE_SHA256 "$stage_args") \
+        || { echo "Dockerfile: no ARG OPENVSCODE_SHA256 with a default" >&2; exit 1; }
+      case "$editor_version" in
+        ''|*[!0-9.]*)
+          echo "Dockerfile: unusable OPENVSCODE_VERSION '$editor_version'" >&2; exit 1 ;;
+      esac
+      # 64 lowercase hex and nothing else — the shape `sha256sum -c` in the build already insists
+      # on, checked again because from here it is a JSON value rather than a filename's sum.
+      case "$editor_sha" in
+        *[!0-9a-f]*)
+          echo "Dockerfile: unusable OPENVSCODE_SHA256 '$editor_sha'" >&2; exit 1 ;;
+      esac
+      [ ${#editor_sha} -eq 64 ] \
+        || { echo "Dockerfile: OPENVSCODE_SHA256 is not 64 hex characters" >&2; exit 1; }
+
+      editor_purl="pkg:generic/openvscode-server@$editor_version"
+      components="$components$sep$(printf \
+        '{"type":"application","bom-ref":"%s","name":"openvscode-server","version":"%s",' \
+        "$editor_purl" "$editor_version")$(printf \
+        '"purl":"%s","hashes":[{"alg":"SHA-256","content":"%s"}]}' \
+        "$editor_purl" "$editor_sha")"
+      depends="$depends$sep$(printf '"%s"' "$editor_purl")"
+
+      # CycloneDX 1.6: the image this run pushed as the metadata component, one container component
+      # per distinct base plus the editor, and a single dependency edge from the root to all of
+      # them. Appends rather than one unreadable format string; every value goes through `%s`, so
+      # nothing in a ref can be read as a printf directive.
+      #
+      # THE ROOT IS THE DECLARED NAME, unqualified — `artifacts:` above says
+      # `{type: docker, name: qits/workspace-editor}`, and that is the coordinate a SoftwareRelease
+      # consumer asks for, `packageName` verbatim. The components keep the refs the build actually
+      # resolved, registry host and all, because that is what this image is really made of.
+      root="pkg:docker/qits/workspace-editor@$version"
+      printf '{"bomFormat":"CycloneDX","specVersion":"1.6","version":1,' > sbom.json
+      printf '"metadata":{"component":{"type":"container","bom-ref":"%s",' "$root" >> sbom.json
+      printf '"name":"qits/workspace-editor","version":"%s","purl":"%s"}},' \
+        "$version" "$root" >> sbom.json
+      printf '"components":[%s],"dependencies":[{"ref":"%s","dependsOn":[%s]}]}\n' \
+        "$components" "$root" "$depends" >> sbom.json
+
+      # The store is a sibling path of the npm registry inside the qits-artifacts deployment, so its
+      # root is DERIVED from $QITS_NPM_REGISTRY_URL — the qits-net alias every step carries, and the
+      # one this container can actually dial. NOT $QITS_REGISTRY: that is the host-published name
+      # the docker daemon pushes through, and the edge in front of it 401s every sessionless write
+      # since the commissioned-credentials cutover (measured twice on 2026.902.53027). ci-base
+      # carries curl, so the PUT goes out from this step directly — no helper container, and none of
+      # the `--network container:$(hostname)` borrowing qits-build-images-oci needs because its own
+      # step image is dind and has no curl.
+      #
+      # THE PATH SEGMENT IS THE DECLARED NAME, VERBATIM: qits-maintenance reads this document at
+      # `/artifacts/sboms/{packageType}/{packageName}/-/{version}` composed from the SoftwareRelease
+      # it saw, so `docker/qits/workspace-editor` here and `{type: docker, name: qits/workspace-
+      # editor}` above are one string written twice. `-f` is what makes a refusal red rather than a
+      # stored error page.
+      sbom_base="${QITS_NPM_REGISTRY_URL%%/artifacts/*}/artifacts/sboms"
+      curl -fsS -X PUT -H 'Content-Type: application/vnd.cyclonedx+json' \
+        --data-binary @sbom.json \
+        "$sbom_base/docker/qits/workspace-editor/-/$version"
