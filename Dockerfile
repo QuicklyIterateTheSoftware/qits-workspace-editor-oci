@@ -25,11 +25,13 @@
 #     the arbitrary uid.
 #
 # --- the base pin ---------------------------------------------------------------------------------
-# ONE LINE, ONE VERSION TOKEN, AND A MACHINE EDITS IT. `.config/qits/ci-event-upstream-workspace-daemon.yml`
-# seds this exact line when qits-workspace-daemon releases `qits/workspace`, so the anchored prefix
-# `ARG WORKSPACE_IMAGE=registry.dev.localhost:8080/qits/workspace:` is a contract with that file.
-# Move the registry host or the image name here and the bump silently matches nothing — which is why
-# that file re-reads the line after its sed and fails when it did not take.
+# ONE LINE, ONE VERSION TOKEN, AND A MACHINE EDITS IT. This line is a *pin* in qits-maintenance's
+# inventory — it reads literal `ARG <NAME>=<image>:<tag>` defaults as docker pins, at `arg:
+# WORKSPACE_IMAGE`, and its bump pipeline rewrites the tag in place. The registry host is dropped
+# when the image is matched, so `registry.dev.localhost:8080/qits/workspace` is the same pin as the
+# internal `qits/workspace` whose releases move it. Keep the value LITERAL: a `$`, a `@`, a `://` or
+# a tag with no `/` before it are each enough to make maintenance stop seeing this as a pin, and the
+# base would then silently stop following the toolchain.
 #
 # PINNED BY VERSION, NEVER FOLLOWED BY A FLOATING TAG. qits-workspace-daemon publishes `:<version>`
 # and `:<sha>` and no floating tag at all (its own ONE TAG PER PIPELINE rule), so there is nothing to
@@ -46,7 +48,7 @@
 # ARG BEFORE FROM, WHICH IS THE ONLY PLACE IT WORKS. An `ARG` declared after a `FROM` belongs to that
 # stage and cannot be read by the `FROM` line itself. This one is global, hence its re-declaration
 # below to bring it back into the stage for the provenance file.
-ARG WORKSPACE_IMAGE=registry.dev.localhost:8080/qits/workspace:2026.902.181302
+ARG WORKSPACE_IMAGE=registry.dev.localhost:8080/qits/workspace:2026.903.163438
 FROM ${WORKSPACE_IMAGE}
 
 # --- openvscode-server ----------------------------------------------------------------------------
