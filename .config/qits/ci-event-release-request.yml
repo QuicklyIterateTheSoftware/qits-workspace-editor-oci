@@ -66,13 +66,14 @@
 # reason for this repository to be the optimist.
 #
 # THE BUMP TRAIN REACHES THIS FILE THROUGH A RELEASE REQUEST NOW, NOT THROUGH A PUSH.
-# ci-event-upstream-workspace-daemon.yml still follows a `qits/workspace` release by rewriting the
-# base pin in Dockerfile and pushing `maintenance/qits-workspace-daemon`. That push no longer builds
-# anything on its own — there is no push pipeline left to catch it — so the branch is a SOURCE, and
-# it is built here when qits-maintenance folds it into a release request. What used to follow the
-# build was a second step asking the qits-workspaces release door; qits-maintenance now makes that
-# ask itself, with its own credential. Two callers for one release was one too many, so the step is
-# gone and the build is all this pipeline owes the train.
+# qits-maintenance follows a `qits/workspace` release by rewriting the base pin in Dockerfile and
+# pushing `maintenance/qits-workspace-daemon` — a hop file here did that until 2026-09-03; it is one
+# row in the maintenance inventory now (README.md, "How the base pin moves"). That push builds
+# nothing on its own — there is no push pipeline left to catch it — so the branch is a SOURCE, and it
+# is built here when qits-maintenance names it in a release request and qits-projects folds it. What
+# used to follow the build was a second step asking the qits-workspaces release door; qits-maintenance
+# opens the release request itself, with its own credential. Two callers for one release was one too
+# many, so the step is gone and the build is all this pipeline owes the train.
 
 event: ReleaseRequestChanged
 
@@ -103,5 +104,7 @@ steps:
       # NO `docker rmi "$ref"`: on a CI host it frees nothing — the layers stay in the builder's
       # cache either way — while under the containerd image store it drops the last reference to
       # content a concurrent build of this same Dockerfile may still be resolving. Two builds of
-      # this one Dockerfile do run concurrently, main's and environment/dev's, which is the race
-      # that broke the release of 2026-08-11.
+      # this one Dockerfile do run concurrently — a re-fold landing while the previous one is still
+      # building, or this file and ci-event-release.yml overlapping — which is the shape of the race
+      # that broke the release of 2026-08-11, back when the two were a push and an environment
+      # branch.

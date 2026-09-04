@@ -65,8 +65,10 @@ property or an npm dependency:
    matched, so the pin's name is `qits/workspace` — the image qits-workspace-daemon publishes.
 2. A newer `qits/workspace` in the registry makes the pin outdated. Maintenance rewrites the tag on
    that one line, on a branch of its own, fast-forward and never forced.
-3. `.config/qits/ci-post-receive.yml` builds that push, and maintenance calls the release door
-   itself.
+3. That branch builds nothing by itself — it is a **source**. Maintenance opens a **release request**
+   naming it, qits-projects folds it onto `release/<id>`, and
+   `.config/qits/ci-event-release-request.yml` builds the fold. A gating green verdict is what lets
+   Auto Release stamp the CalVer and tag.
 4. `.config/qits/ci-event-release.yml` rebuilds at the tag and pushes
    `qits/workspace-editor:<version>`.
 
@@ -85,17 +87,19 @@ base from following the toolchain, silently.
 
 ## Lifecycle
 
-1. **Push** — `.config/qits/ci-post-receive.yml` builds and pushes `qits/workspace-editor:<sha>`.
-   There is no test step and none is missing: this repository holds a Dockerfile and no code, so the
-   build *is* the test.
-2. **Release** — qits-workspaces stamps a CalVer and pushes the annotated tag.
+1. **QA** — a release request naming a branch of this repository folds onto `release/<id>`, and
+   `.config/qits/ci-event-release-request.yml` builds and pushes `qits/workspace-editor:<sha>` at
+   that fold. There is no test step and none is missing: this repository holds a Dockerfile and no
+   code, so the build *is* the test — which is also why every step here gates.
+2. **Release** — on a gating green verdict qits-projects' Auto Release stamps a CalVer, writes the
+   annotated tag and announces `SCMRelease`.
    `.config/qits/ci-event-release.yml` builds *at the tag* and pushes
    `qits/workspace-editor:<version>`; its green run makes qits-ci announce one `SoftwareRelease`.
 3. **Consumption** — qits-workspaces pins the editor image by version and starts a container from it
    when a workspace asks for an editor. A released image goes live on the next deploy of the pinning
    service; containers already running are untouched.
 
-One tag per pipeline, always: the push pipeline owns the sha coordinate, the release pipeline owns
+One tag per pipeline, always: the QA pipeline owns the sha coordinate, the release pipeline owns
 the version coordinate, and neither writes the other's. `docker build -t A -t B` followed by two
 pushes fails the second with "tag does not exist" — BuildKit's exporter does not reliably leave every
 alias of a multi-tag build in the local image store.
