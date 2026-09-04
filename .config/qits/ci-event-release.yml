@@ -2,16 +2,18 @@
 # editor image.
 #
 # THE SELECTION NAMES THIS REPOSITORY, WHICH READS LIKE A LOOP AND IS NOT — the same shape every
-# sibling's release pipeline has. `SCMPublishTag` says only "this repository now has this tag", and
-# the git host says it the instant a push lands; nothing here pushes one. qits-ci turns a green run
+# sibling's release pipeline has. `SCMRelease` says only "this repository released this version",
+# and qits-projects says it the instant the tag is written; nothing here releases anything. qits-ci
+# turns a green run
 # into one `SoftwareRelease` per entry under `artifacts:` when an `SCMRelease` for the version
 # arrived too, and nothing here listens for either.
 #
-# THE TAG IS THE TRIGGER SO THAT A RESTORE NEEDS NOTHING ELSE. The tag is the durable release stamp —
-# it outlives the event log and every image store — so a bootstrap replay re-establishes this release
-# by pushing the tag alone and letting this pipeline rebuild the image. A real release pushes the tag
-# and publishes `SCMRelease` beside it; the extra event buys the announcement, not the image
-# (bootstrap-replay-plan.md in the wrapper).
+# THE VERSION TAG IS STILL THE DURABLE STAMP, BUT IT NO LONGER TRIGGERS. Under the release-request
+# flow the tag is written by qits-githost's tag primitive, which announces nothing — the trigger is
+# qits-projects' `SCMRelease`. A bootstrap replay therefore re-establishes a release by pushing the
+# tag quietly and re-presenting the `SCMRelease` through qits-ci's manual trigger door
+# (`POST /ci/api/events/trigger`), which runs this same pipeline. qits-ci still announces
+# `SoftwareRelease` only where a green run and an `SCMRelease` meet.
 #
 # THE FILE HAS TO BE IN PLACE BEFORE THE TAG IT SELECTS IS PUSHED. The bus is at-most-once with no
 # catch-up and no replay, so a trigger file arriving after its event loses that release and looks
@@ -19,12 +21,14 @@
 #
 # The repository has no version file. A qits release creates the version and the annotated tag, and
 # the tag name IS that version.
-event: SCMPublishTag
+event: SCMRelease
 when:
-  # repoName, not repoId: since the identity cutover the git host's own coordinate is an opaque
-  # UUID, so a name match on repoId never fires. The tag event echoes the public name the push
-  # was addressed with; a rename updates this line in the same campaign.
-  - repoName: { exact: qits-workspace-editor-oci }
+  # SCMRelease, not SCMPublishTag: under the release-request flow the version tag is written by
+  # qits-githost's tag primitive, which fires no post-receive and so publishes no SCMPublishTag —
+  # a recipe listening for the tag event never runs again. qits-projects' Auto Release publishes
+  # SCMRelease carrying the repository's public name, and a bootstrap replay arrives as this same
+  # event through qits-ci's manual trigger door. A rename updates this line in the same campaign.
+  - repository: { exact: qits-workspace-editor-oci }
 
 # A DECLARATION, NOT A REPORT. qits-ci never learns how to publish anything — the `docker push` below
 # is this repository's own step — so it cannot see what landed. It announces one `SoftwareRelease` per
@@ -62,7 +66,7 @@ steps:
       # value before any registry tag is created, since a CalVer is only digits and dots. It matters
       # more than it looks: the tag name IS the version now, and no release flow vetted it — any tag
       # pushed to this repository arrives here.
-      version=$(printf '%s' "$QITS_EVENT_PAYLOAD" | jq -er .tagName)
+      version=$(printf '%s' "$QITS_EVENT_PAYLOAD" | jq -er .version)
       case "$version" in
         ''|null|*[!0-9.]*) echo "not a CalVer tag: $version" >&2; exit 1 ;;
       esac
