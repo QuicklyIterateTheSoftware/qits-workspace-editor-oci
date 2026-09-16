@@ -66,6 +66,14 @@ nothing can pull.
 None of it enters the image — `.dockerignore` keeps the sources, the wrapper and `target/` out of
 the build context. The image is still the workspace image plus one directory.
 
+**The jar's first version is one release behind the image's, and that is not a bug to fix.**
+`.config/qits/ci-event-release.yml` is read at **`main`'s head**, always — a release pipeline cannot
+be changed by the release that introduces it, which is the same rule that stops a release request
+altering the CI that gates it. So `2026.916.160825` pushed the image under the new recipe's *tag*
+and ran the old recipe's *steps*: the image exists at that version and the jar does not. The next
+release publishes both, and every release after it. Do not look for `qits-workspace-editor-image`
+at a version older than that one; it was never there to find.
+
 ## The two pins
 
 Both live in `Dockerfile`, both as `ARG`s with the pin as the default, so CI passes no
