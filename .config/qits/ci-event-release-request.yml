@@ -128,3 +128,29 @@ steps:
       buildctl build --frontend dockerfile.v0 \
         --local context=. --local dockerfile=. \
         --output "type=image,name=$ref,push=true"
+
+    # --- the pin jar, gated ------------------------------------------------------------------------
+    # THE JAR IS QA'd HERE OR IT IS NOT QA'd AT ALL. `ci-event-release.yml` deploys it, and a release
+    # pipeline is not a gate: by the time it runs the version is already tagged. So the fold builds
+    # and tests it here, which is the same bargain every reactor in the estate makes.
+    #
+    # What it really guards is the resource-filtering block in pom.xml. Delete it and the jar ships
+    # the literal `${project.version}` as an image tag; WorkspaceEditorImageTest is what turns that
+    # into a red fold instead of a qits-workspaces container that never starts.
+    #
+    # `verify`, not `deploy`: a fold is not a release and must publish nothing. And no `build: true`
+    # — this step compiles one class and reaches no builder.
+  - image: qits/build-images/maven-base:latest
+    timeout-seconds: 1800
+    script: |
+      set -eu
+      # -s, and QITS_MAVEN_CENTRAL_URL off $QITS_MAVEN_PROXY_URL: the pom declares `qits-maven` at an
+      # edge vhost that is dead in here, and the settings file mirrors that id — and Central — onto
+      # the in-network addresses. Nothing here resolves a platform artifact today (the jar depends on
+      # junit alone), but the repository declaration is what a future dependency would arrive
+      # through, and a step that only works while the dependency list stays empty is a trap.
+      QITS_MAVEN_CENTRAL_URL="${QITS_MAVEN_PROXY_URL:-}" \
+      QITS_MAVEN_AUTH_USR="${QITS_COMMISSIONED_CLIENT_ID-}" \
+      QITS_MAVEN_AUTH_PSW="${QITS_COMMISSIONED_CLIENT_SECRET-}" \
+      ./mvnw -B -ntp -s .qits-maven-settings.xml verify \
+        -Dqits.maven.repository.url="$QITS_MAVEN_REGISTRY_URL"

@@ -70,6 +70,15 @@ checkout:
   optional: true        # ...and then this run is main's head, exactly as it was before
 artifacts:
   - { type: docker, name: qits/workspace-editor }
+  # THE COORDINATE OF THAT IMAGE, AS A JAR. qits-workspaces starts editor containers from the image
+  # above and used to learn which version from `env.QITS_EDITOR_IMAGE_VERSION`, a qits-configuration
+  # entry a release listener rewrote the moment this pipeline pushed — so a new image reached the
+  # next workspace with no test of the pair, and the fallback default shipped in qits-workspaces
+  # aged until it named an image retention had deleted. It depends on this instead: the dependency
+  # has to resolve for the consumer to build, the maintenance train moves the pom line like any
+  # internal library, and the consumer's own release request gates the move. WorkspaceEditorImage
+  # carries the whole reasoning.
+  - { type: maven, name: "eu.wohlben.qits:qits-workspace-editor-image" }
 
 # NO deployments.yml in this repository, and that is correct. Nothing DEPLOYS this image — qits-
 # workspaces starts a container from it per workspace, the same way it starts one from
@@ -381,3 +390,60 @@ steps:
       curl -fsS -X PUT -H 'Content-Type: application/vnd.cyclonedx+json' \
         --data-binary @sbom.json \
         "$sbom_base/docker/qits/workspace-editor/-/$version"
+
+    # --- the pin jar --------------------------------------------------------------------------
+    # A SECOND STEP, AND A DIFFERENT IMAGE: this one needs maven and the one above needs buildctl.
+    # It runs AFTER the image push on purpose — the jar is what tells qits-workspaces which image to
+    # start, so a jar resolvable before its image exists would be a pin pointing at nothing. Briefly
+    # only, but a release is exactly the moment somebody is watching.
+    #
+    # The jar depends on nothing and compiles one class, so this step is seconds beside the multi-
+    # gigabyte build above.
+  - image: qits/build-images/maven-base:latest
+    timeout-seconds: 1800
+    script: |
+      set -eu
+      version=$(printf '%s' "$QITS_EVENT_PAYLOAD" | jq -er .version)
+      case "$version" in
+        ''|null|*[!0-9.]*) echo "not a CalVer tag: $version" >&2; exit 1 ;;
+      esac
+      # The tag, for the reason the step above takes it: main has moved on and the tag has not, and
+      # the released tree's stamped ${project.version} is what gets filtered into the jar as the
+      # image tag it names.
+      git fetch "$QITS_CI_REPOSITORY_URL" "refs/tags/$version:refs/tags/$version"
+      git checkout --detach "$version"
+
+      # Already published means already published: re-running a deploy of identical bytes is a
+      # no-op, so this SKIPS rather than failing. (The daemon-binary PUT in qits-workspace-daemon
+      # refuses a 409 instead, because that store is immutable and a re-PUT would be a lie. Two
+      # different stores, two different right answers.)
+      if curl -fsS -o /dev/null \
+        "$QITS_MAVEN_REGISTRY_URL/eu/wohlben/qits/qits-workspace-editor-image/$version/qits-workspace-editor-image-$version.pom"; then
+        echo "qits-workspace-editor-image $version is already published — skipping"
+        exit 0
+      fi
+
+      # -s and the two QITS_MAVEN_AUTH_* variables: the pom declares `qits-maven` at an edge vhost
+      # that is dead inside a step container, and .qits-maven-settings.xml mirrors that repository
+      # id onto the in-network $QITS_MAVEN_REPOSITORY_URL (and Central onto the platform's
+      # pull-through while $QITS_MAVEN_PROXY_URL is non-empty). `-` under set -u: a deployment that
+      # commissions nothing sends no pair, and an anonymous resolve is a valid state.
+      QITS_MAVEN_CENTRAL_URL="${QITS_MAVEN_PROXY_URL:-}" \
+      QITS_MAVEN_AUTH_USR="${QITS_COMMISSIONED_CLIENT_ID-}" \
+      QITS_MAVEN_AUTH_PSW="${QITS_COMMISSIONED_CLIENT_SECRET-}" \
+      ./mvnw -B -ntp -s .qits-maven-settings.xml deploy -DskipTests \
+        -Dqits.maven.repository.url="$QITS_MAVEN_REGISTRY_URL" \
+        -DaltDeploymentRepository="qits::default::$QITS_MAVEN_REGISTRY_URL"
+
+      # Its own document under its own coordinate. The jar's runtime closure is empty, and that is
+      # worth being able to prove: a consumer auditing what pinning the editor image dragged in
+      # should see that it dragged in nothing.
+      QITS_MAVEN_CENTRAL_URL="${QITS_MAVEN_PROXY_URL:-}" \
+      ./mvnw -B -ntp -s .qits-maven-settings.xml -DskipTests \
+        -Dqits.maven.repository.url="$QITS_MAVEN_REGISTRY_URL" \
+        org.cyclonedx:cyclonedx-maven-plugin:2.9.1:makeBom \
+        -DoutputFormat=json -DoutputName=sbom -DschemaVersion=1.6
+      sbom_base="${QITS_MAVEN_REGISTRY_URL%%/artifacts/*}/artifacts/sboms"
+      curl -fsS -X PUT -H 'Content-Type: application/vnd.cyclonedx+json' \
+        --data-binary @target/sbom.json \
+        "$sbom_base/maven/eu.wohlben.qits:qits-workspace-editor-image/-/$version"

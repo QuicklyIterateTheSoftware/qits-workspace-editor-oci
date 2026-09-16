@@ -1,3 +1,13 @@
 .git
 .config
 README.md
+# The pin jar's sources and build. They exist so qits-workspaces can DEPEND on this release's
+# version instead of being handed it (README.md, "The pin jar"); none of it belongs in the image,
+# which is the workspace image plus one directory and nothing else.
+pom.xml
+mvnw
+mvnw.cmd
+.mvn
+.qits-maven-settings.xml
+src
+target

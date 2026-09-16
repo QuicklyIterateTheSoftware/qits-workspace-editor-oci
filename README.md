@@ -39,6 +39,33 @@ what the recipe produces and what qits-workspaces writes.
 - **No `deployments.yml`.** Nothing *deploys* this image: qits-workspaces starts a container from it
   per workspace, exactly as it does from `qits/workspace`. Same case as `qits-workspace-oci`.
 
+## The pin jar
+
+A release publishes **two** artifacts: the image, and `eu.wohlben.qits:qits-workspace-editor-image`
+— one class, `WorkspaceEditorImage`, whose `VERSION` constant is the image tag this release pushed.
+That is the whole jar.
+
+It exists so **qits-workspaces pins the editor image in its own pom** instead of being handed a
+version. Before it, the version arrived as `env.QITS_EDITOR_IMAGE_VERSION`, a qits-configuration
+entry a release listener rewrote the instant this pipeline pushed. Two things followed, and both
+were real: a new editor image was used by the next workspace with no test of the pair, and the
+fallback default shipped inside qits-workspaces aged in silence until it named an image the
+registry's retention had deleted — so any run without the injection started from a reference that
+could not be pulled.
+
+A dependency fixes both, because a dependency has to **resolve**. The maintenance train moves the
+pom line like any internal library, the consumer's own release request gates the move, and a version
+that does not exist is a red build rather than a failed pull a layer away.
+
+The version is never written down twice: the release stamps this repository's root `pom.xml` with
+the version it is about to tag, resource filtering carries `${project.version}` into the jar, and
+the same release pushes the image under that tag. `WorkspaceEditorImageTest` refuses an unfiltered
+value, which is what makes deleting the filtering block a red fold rather than an image reference
+nothing can pull.
+
+None of it enters the image — `.dockerignore` keeps the sources, the wrapper and `target/` out of
+the build context. The image is still the workspace image plus one directory.
+
 ## The two pins
 
 Both live in `Dockerfile`, both as `ARG`s with the pin as the default, so CI passes no
