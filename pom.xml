@@ -32,7 +32,7 @@
          is what makes the jar's version and the image tag one string rather than two things to keep
          in step. A working tree therefore names the PREVIOUS release, which is honest — nothing has
          been published for the tree in hand. -->
-    <version>2026.918.155346</version>
+    <version>2026.918.164234</version>
     <packaging>jar</packaging>
     <name>qits-workspace-editor-image</name>
     <description>The coordinate of the qits/workspace-editor image this release published.</description>
