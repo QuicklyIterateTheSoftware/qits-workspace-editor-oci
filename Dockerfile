@@ -48,7 +48,7 @@
 # ARG BEFORE FROM, WHICH IS THE ONLY PLACE IT WORKS. An `ARG` declared after a `FROM` belongs to that
 # stage and cannot be read by the `FROM` line itself. This one is global, hence its re-declaration
 # below to bring it back into the stage for the provenance file.
-ARG WORKSPACE_IMAGE=registry.dev.localhost:8080/qits/workspace:2026.918.190232
+ARG WORKSPACE_IMAGE=registry.dev.localhost:8080/qits/workspace:2026.918.215210
 FROM ${WORKSPACE_IMAGE}
 
 # --- openvscode-server ----------------------------------------------------------------------------
