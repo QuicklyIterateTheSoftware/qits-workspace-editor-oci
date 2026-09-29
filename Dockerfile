@@ -94,7 +94,12 @@ ARG WORKSPACE_IMAGE
 RUN mkdir -p /opt/openvscode-server \
     && curl -fsSL "${OPENVSCODE_URL}" -o /tmp/openvscode-server.tar.gz \
     && printf '%s  %s\n' "${OPENVSCODE_SHA256}" /tmp/openvscode-server.tar.gz | sha256sum -c - \
-    && tar -xz -C /opt/openvscode-server --strip-components=1 -f /tmp/openvscode-server.tar.gz \
+    # `--no-same-owner`: nothing here asserts the tarball's entries are owned by an id this image
+    # can afford to keep. A CI runner whose docker lives in a user namespace fails to even mount an
+    # image carrying a file above its mapped range ("failed to Lchown ... subordinate IDs" —
+    # qits-556); the same fix already went into qits-workspace-oci's jdtls extraction, which this
+    # base image itself now carries clean, so this is the only other tar extraction left to cover.
+    && tar -xz --no-same-owner -C /opt/openvscode-server --strip-components=1 -f /tmp/openvscode-server.tar.gz \
     && rm -f /tmp/openvscode-server.tar.gz \
     && test -x /opt/openvscode-server/bin/openvscode-server \
     && printf 'openvscode-version=%s\nopenvscode-url=%s\nopenvscode-sha256=%s\nopenvscode-home=%s\nworkspace-image=%s\n' \
@@ -105,3 +110,18 @@ RUN mkdir -p /opt/openvscode-server \
         "${WORKSPACE_IMAGE}" \
         > /etc/qits-editor-provenance \
     && chmod 0644 /etc/qits-editor-provenance
+
+# Guard of last resort, last RUN in the image so it sees the openvscode-server layer above plus
+# everything the workspace base underneath it already carries: fail the build if any path landed
+# owned by a uid or gid above 65535. The extraction above is fixed with `--no-same-owner`, but this
+# also re-checks the inherited base in case a future workspace-base release regresses — a CI runner
+# whose docker lives in a user namespace cannot map such an id and fails to even mount the image
+# (qits-556), so catching it here fails this build's own gate rather than every downstream one.
+# `-xdev` stays within this image's single filesystem (no bind mounts at build time), so it never
+# reaches /proc or /sys, which are not part of the image anyway.
+RUN bad="$(find / -xdev \( -uid +65535 -o -gid +65535 \) -print 2>/dev/null | head -20)"; \
+    if [ -n "$bad" ]; then \
+        echo "Files owned by an id above 65535 (a CI runner in a user namespace cannot map them - qits-556):" >&2; \
+        echo "$bad" >&2; \
+        exit 1; \
+    fi
