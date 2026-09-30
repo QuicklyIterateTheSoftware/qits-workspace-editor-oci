@@ -27,8 +27,12 @@ release-request:
     timeout-seconds: 1800
     script: |
       QITS_MAVEN_CENTRAL_URL="${QITS_MAVEN_PROXY_URL:-}" \
-      QITS_MAVEN_AUTH_USR="${QITS_COMMISSIONED_CLIENT_ID-}" \
-      QITS_MAVEN_AUTH_PSW="${QITS_COMMISSIONED_CLIENT_SECRET-}" \
+      # The commissioned pair where there is one (INTERNAL); otherwise what qits-ci already put in
+      # QITS_MAVEN_AUTH_USR/PSW — the run's token subject and token on the EDGE plane (qits-441),
+      # which the bare `${QITS_COMMISSIONED_CLIENT_ID-}` used to overwrite with an empty string,
+      # a 401 from the public mirror on the first Central artifact.
+      QITS_MAVEN_AUTH_USR="${QITS_COMMISSIONED_CLIENT_ID:-${QITS_MAVEN_AUTH_USR-}}" \
+      QITS_MAVEN_AUTH_PSW="${QITS_COMMISSIONED_CLIENT_SECRET:-${QITS_MAVEN_AUTH_PSW-}}" \
       ./mvnw -B -ntp -s .qits-maven-settings.xml verify \
         -Dqits.maven.repository.url="$QITS_MAVEN_REGISTRY_URL"
 
@@ -243,7 +247,15 @@ release:
     script: |
       # Already published means already published: re-running a deploy of identical bytes is a
       # no-op, so this skips rather than failing.
-      if curl -fsS -o /dev/null \
+      # ON THE EDGE PLANE THE REGISTRY ANSWERS AN ANONYMOUS READ 401 (qits-441), which this guard
+      # would read as "not published" and so re-deploy an occupied coordinate on a retry. There the
+      # run's token rides as a bearer — qits-ci sets $QITS_TOKEN on that plane alone — and
+      # in-network the read stays anonymous.
+      set --
+      if [ -n "${QITS_TOKEN:-}" ]; then
+        set -- -H "Authorization: Bearer $QITS_TOKEN"
+      fi
+      if curl -fsS "$@" -o /dev/null \
         "$QITS_MAVEN_REGISTRY_URL/eu/wohlben/qits/qits-workspace-editor-image/$QITS_VERSION/qits-workspace-editor-image-$QITS_VERSION.pom"; then
         echo "qits-workspace-editor-image $QITS_VERSION is already published — skipping"
         exit 0
@@ -329,8 +341,12 @@ release:
         deploy_settings="-gs /tmp/qits-recipe-deploy-settings.xml"
       fi
       QITS_MAVEN_CENTRAL_URL="${QITS_MAVEN_PROXY_URL:-}" \
-      QITS_MAVEN_AUTH_USR="${QITS_COMMISSIONED_CLIENT_ID-}" \
-      QITS_MAVEN_AUTH_PSW="${QITS_COMMISSIONED_CLIENT_SECRET-}" \
+      # The commissioned pair where there is one (INTERNAL); otherwise what qits-ci already put in
+      # QITS_MAVEN_AUTH_USR/PSW — the run's token subject and token on the EDGE plane (qits-441),
+      # which the bare `${QITS_COMMISSIONED_CLIENT_ID-}` used to overwrite with an empty string,
+      # a 401 from the public mirror on the first Central artifact.
+      QITS_MAVEN_AUTH_USR="${QITS_COMMISSIONED_CLIENT_ID:-${QITS_MAVEN_AUTH_USR-}}" \
+      QITS_MAVEN_AUTH_PSW="${QITS_COMMISSIONED_CLIENT_SECRET:-${QITS_MAVEN_AUTH_PSW-}}" \
       ./mvnw -B -ntp -s .qits-maven-settings.xml $deploy_settings deploy -DskipTests \
         -Dqits.maven.repository.url="$QITS_MAVEN_REGISTRY_URL" \
         -DaltDeploymentRepository="qits::default::$QITS_MAVEN_REGISTRY_URL"
