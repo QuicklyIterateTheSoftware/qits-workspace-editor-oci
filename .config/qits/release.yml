@@ -1,15 +1,10 @@
 archetype: oci
 artifacts:
   - { type: docker, name: qits/workspace-editor, sbom: sbom.json }
-  # NO `sbom:` ON THIS ENTRY, AND THAT IS NOT AN OVERSIGHT. The composed postlude submits every
-  # declared document from ONE step — the last one that builds — and the two documents here are
-  # written by two different steps in two different containers with two different checkouts. The
-  # image's `sbom.json` is written by the buildctl step, which is the step the postlude lands on;
-  # `target/sbom.json` does not exist there and never will, so declaring it would make the postlude
-  # submit a file that is not there and fail the release. The maven step therefore submits its own,
-  # with the same `qits artifacts publish sbom submit` the postlude would have run, from the
-  # container that wrote it.
-  - { type: maven, name: "eu.wohlben.qits:qits-workspace-editor-image" }
+  # qits-ci submits each declared `sbom:` from whichever release step holds the file: the image's
+  # `sbom.json` from the buildctl step above, and this jar's `target/sbom.json` from the maven step
+  # below, where `makeBom` writes it.
+  - { type: maven, name: "eu.wohlben.qits:qits-workspace-editor-image", sbom: target/sbom.json }
 
 # AN IMAGE AND A JAR OUT OF ONE TREE: the oci archetype pushes exactly one image and publishes
 # nothing else, and its extractor refuses a second entry outright. Both slots are this repository's.
@@ -253,9 +248,3 @@ release:
         -Dqits.maven.repository.url="$QITS_MAVEN_REGISTRY_URL" \
         org.cyclonedx:cyclonedx-maven-plugin:2.9.1:makeBom \
         -DoutputFormat=json -DoutputName=sbom -DschemaVersion=1.6
-      # THE POSTLUDE CANNOT REACH THIS FILE — see the `artifacts:` note at the top — so the step that
-      # wrote it submits it, with the postlude's own command rather than a curl PUT. The prelude puts
-      # `qits` on PATH in every composed step.
-      qits artifacts publish sbom submit \
-        --type maven --name eu.wohlben.qits:qits-workspace-editor-image \
-        --version "$QITS_VERSION" --file target/sbom.json
