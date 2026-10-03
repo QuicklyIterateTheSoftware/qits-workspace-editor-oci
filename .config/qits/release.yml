@@ -13,7 +13,9 @@ release-request:
     build: true
     timeout-seconds: 7200
     script: |
-      ref="$QITS_BUILD_REGISTRY/$QITS_IMAGE_REPOSITORY/workspace-editor:$QITS_CI_SHA"
+      # The registry is code under the platform's public domain (qits-731); `wohlben.eu` covers a
+      # qits-ci too old to inject $QITS_DOMAIN.
+      ref="registry.qits.${QITS_DOMAIN:-wohlben.eu}/$QITS_IMAGE_REPOSITORY/workspace-editor:$QITS_CI_SHA"
       buildctl build --frontend dockerfile.v0 \
         --local context=. --local dockerfile=. \
         --output "type=image,name=$ref,push=true"
@@ -21,7 +23,10 @@ release-request:
   - image: qits/build-images/maven-base:latest
     timeout-seconds: 1800
     script: |
-      QITS_MAVEN_CENTRAL_URL="${QITS_MAVEN_PROXY_URL:-}" \
+      # The Central cache's address is code under the platform's public domain (qits-731);
+      # `wohlben.eu` covers a qits-ci too old to inject $QITS_DOMAIN.
+      qits_domain=${QITS_DOMAIN:-wohlben.eu}
+      QITS_MAVEN_CENTRAL_URL="https://mirror.qits.$qits_domain/mirror/maven/central" \
       # The commissioned pair where there is one (INTERNAL); otherwise what qits-ci already put in
       # QITS_MAVEN_AUTH_USR/PSW — the run's token subject and token on the EDGE plane (qits-441),
       # which the bare `${QITS_COMMISSIONED_CLIENT_ID-}` used to overwrite with an empty string,
@@ -29,14 +34,16 @@ release-request:
       QITS_MAVEN_AUTH_USR="${QITS_COMMISSIONED_CLIENT_ID:-${QITS_MAVEN_AUTH_USR-}}" \
       QITS_MAVEN_AUTH_PSW="${QITS_COMMISSIONED_CLIENT_SECRET:-${QITS_MAVEN_AUTH_PSW-}}" \
       ./mvnw -B -ntp -s .qits-maven-settings.xml verify \
-        -Dqits.maven.repository.url="$QITS_MAVEN_REGISTRY_URL"
+        -Dqits.maven.repository.url="https://registry.qits.$qits_domain/artifacts/maven/maven"
 
 release:
   - image: qits/build-images/ci-base:latest
     build: true
     timeout-seconds: 7200
     script: |
-      ref="$QITS_BUILD_REGISTRY/$QITS_IMAGE_REPOSITORY/workspace-editor:$QITS_VERSION"
+      # The registry is code under the platform's public domain (qits-731); `wohlben.eu` covers a
+      # qits-ci too old to inject $QITS_DOMAIN.
+      ref="registry.qits.${QITS_DOMAIN:-wohlben.eu}/$QITS_IMAGE_REPOSITORY/workspace-editor:$QITS_VERSION"
       buildctl build --frontend dockerfile.v0 \
         --local context=. --local dockerfile=. \
         --output "type=image,name=$ref,push=true"
@@ -243,8 +250,11 @@ release:
       # NO LONGER A DEPLOY: the CLI publishes this coordinate from the postlude, off the jar this
       # step leaves in target/. This step only has to build it.
       ./mvnw -B -ntp -s .qits-maven-settings.xml package -DskipTests
-      QITS_MAVEN_CENTRAL_URL="${QITS_MAVEN_PROXY_URL:-}" \
+      # The two hosts are code under the platform's public domain (qits-731); `wohlben.eu` covers a
+      # qits-ci too old to inject $QITS_DOMAIN.
+      qits_domain=${QITS_DOMAIN:-wohlben.eu}
+      QITS_MAVEN_CENTRAL_URL="https://mirror.qits.$qits_domain/mirror/maven/central" \
       ./mvnw -B -ntp -s .qits-maven-settings.xml -DskipTests \
-        -Dqits.maven.repository.url="$QITS_MAVEN_REGISTRY_URL" \
+        -Dqits.maven.repository.url="https://registry.qits.$qits_domain/artifacts/maven/maven" \
         org.cyclonedx:cyclonedx-maven-plugin:2.9.1:makeBom \
         -DoutputFormat=json -DoutputName=sbom -DschemaVersion=1.6

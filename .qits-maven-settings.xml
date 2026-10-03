@@ -27,11 +27,10 @@
       <username>${env.QITS_MAVEN_AUTH_USR}</username>
       <password>${env.QITS_MAVEN_AUTH_PSW}</password>
     </server>
-    <!-- Same commissioned credential, for the mirror's central pull-through. Maven presents it
-         only on the edge's 401 (a build resolving Central at
-         mirror.dev.localhost:8080/mirror/maven/central); an in-network step-plane read is anonymous
-         and never sends it. Both variables are the BuildKit secret mounts on docker/Dockerfile's
-         mvnw RUN, as for qits-maven-network. -->
+    <!-- Same commissioned credential, for the mirror's central pull-through at
+         https://mirror.qits.$QITS_DOMAIN/mirror/maven/central, which answers 401 anonymously. Both
+         variables are the BuildKit secret mounts on docker/Dockerfile's mvnw RUN, as for
+         qits-maven-network. -->
     <server>
       <id>qits-central-proxy</id>
       <username>${env.QITS_MAVEN_AUTH_USR}</username>
