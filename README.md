@@ -1,5 +1,9 @@
 # qits-workspace-editor-oci
 
+> **Not started by qits-workspaces any more.** Epic qits-1152 removed its old "editor workspace"
+> integration. The image is still built and released. Epic qits-1150 decides how the editor is
+> integrated again.
+
 The workspace **editor** image, published as **`qits/workspace-editor`**.
 
 It is the workspace image plus one directory: a pinned
