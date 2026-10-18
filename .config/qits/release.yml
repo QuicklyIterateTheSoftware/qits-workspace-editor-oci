@@ -156,11 +156,8 @@ release:
             ;;
           *)
             # An untagged `FROM` means `latest` by definition. The colon is not proof of a tag: a
-            # registry host may carry a port, and in `host:5000/image` the colon is the port's — the
-            # retired dev-only pin here carried exactly that shape, `registry.dev.localhost:8080/
-            # qits/...`. The public default, `registry.qits.$QITS_DOMAIN/qits/...`, has no port, but
-            # the guard stays generic: WORKSPACE_IMAGE is an ARG a hand build can still override with
-            # one that does.
+            # registry host may carry a port, and in `host:5000/image` the colon is the port's —
+            # which is not hypothetical here, the base is `registry.dev.localhost:8080/qits/...`.
             tag=${base##*:}
             case "$base" in
               *:*) : ;;
