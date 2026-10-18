@@ -28,7 +28,7 @@
 # ONE LINE, ONE VERSION TOKEN, AND A MACHINE EDITS IT. This line is a *pin* in qits-maintenance's
 # inventory — it reads literal `ARG <NAME>=<image>:<tag>` defaults as docker pins, at `arg:
 # WORKSPACE_IMAGE`, and its bump pipeline rewrites the tag in place. The registry host is dropped
-# when the image is matched, so `registry.dev.localhost:8080/qits/workspace` is the same pin as the
+# when the image is matched, so `registry.qits.${QITS_DOMAIN}/qits/workspace` is the same pin as the
 # internal `qits/workspace` whose releases move it. Keep the value LITERAL: a `$`, a `@`, a `://` or
 # a tag with no `/` before it are each enough to make maintenance stop seeing this as a pin, and the
 # base would then silently stop following the toolchain.
@@ -48,7 +48,11 @@
 # ARG BEFORE FROM, WHICH IS THE ONLY PLACE IT WORKS. An `ARG` declared after a `FROM` belongs to that
 # stage and cannot be read by the `FROM` line itself. This one is global, hence its re-declaration
 # below to bring it back into the stage for the provenance file.
-ARG WORKSPACE_IMAGE=registry.dev.localhost:8080/qits/workspace:2026.1018.73250
+#
+# The platform's public domain (qits-731). Global, and declared above WORKSPACE_IMAGE, so that
+# default can read it; the release recipes pass `--opt build-arg:QITS_DOMAIN`.
+ARG QITS_DOMAIN=wohlben.eu
+ARG WORKSPACE_IMAGE=registry.qits.${QITS_DOMAIN}/qits/workspace:2026.1018.73250
 FROM ${WORKSPACE_IMAGE}
 
 # --- openvscode-server ----------------------------------------------------------------------------
