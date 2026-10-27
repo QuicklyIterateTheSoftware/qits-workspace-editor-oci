@@ -52,7 +52,7 @@
 # The platform's public domain (qits-731). Global, and declared above WORKSPACE_IMAGE, so that
 # default can read it; the release recipes pass `--opt build-arg:QITS_DOMAIN`.
 ARG QITS_DOMAIN=wohlben.eu
-ARG WORKSPACE_IMAGE=registry.qits.${QITS_DOMAIN}/qits/workspace:2026.1027.193351
+ARG WORKSPACE_IMAGE=registry.qits.${QITS_DOMAIN}/qits/workspace:2026.1027.222355
 FROM ${WORKSPACE_IMAGE}
 
 # --- openvscode-server ----------------------------------------------------------------------------
