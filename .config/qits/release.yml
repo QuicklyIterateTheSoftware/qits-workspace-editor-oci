@@ -26,13 +26,10 @@ release-request:
       # The Central cache's address is code under the platform's public domain (qits-731);
       # `wohlben.eu` covers a qits-ci too old to inject $QITS_DOMAIN.
       qits_domain=${QITS_DOMAIN:-wohlben.eu}
+      # The credential is what qits-ci already put in QITS_MAVEN_AUTH_USR/PSW — the run's token
+      # subject and token (qits-443) — read straight from the step's environment by
+      # .qits-maven-settings.xml, so nothing here touches it.
       QITS_MAVEN_CENTRAL_URL="https://mirror.qits.$qits_domain/mirror/maven/central" \
-      # The commissioned pair where there is one (INTERNAL); otherwise what qits-ci already put in
-      # QITS_MAVEN_AUTH_USR/PSW — the run's token subject and token on the EDGE plane (qits-441),
-      # which the bare `${QITS_COMMISSIONED_CLIENT_ID-}` used to overwrite with an empty string,
-      # a 401 from the public mirror on the first Central artifact.
-      QITS_MAVEN_AUTH_USR="${QITS_COMMISSIONED_CLIENT_ID:-${QITS_MAVEN_AUTH_USR-}}" \
-      QITS_MAVEN_AUTH_PSW="${QITS_COMMISSIONED_CLIENT_SECRET:-${QITS_MAVEN_AUTH_PSW-}}" \
       ./mvnw -B -ntp -s .qits-maven-settings.xml verify \
         -Dqits.maven.repository.url="https://registry.qits.$qits_domain/artifacts/maven/maven"
 
